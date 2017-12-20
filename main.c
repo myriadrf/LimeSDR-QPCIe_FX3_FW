@@ -1,55 +1,11 @@
-/*
- ## Cypress USB 3.0 Platform source file (cyfxslfifosync.c)
- ## ===========================
- ##
- ##  Copyright Cypress Semiconductor Corporation, 2010-2011,
- ##  All Rights Reserved
- ##  UNPUBLISHED, LICENSED SOFTWARE.
- ##
- ##  CONFIDENTIAL AND PROPRIETARY INFORMATION
- ##  WHICH IS THE PROPERTY OF CYPRESS.
- ##
- ##  Use of this file is governed
- ##  by the license agreement included in the file
- ##
- ##     <install>/license/license.txt
- ##
- ##  where <install> is the Cypress software
- ##  installation root directory path.
- ##
- ## ===========================
-*/
-
-/* This file illustrates the Slave FIFO Synchronous mode example */
-
-/*
-   This example comprises of two USB bulk endpoints. A bulk OUT endpoint acts as the
-   producer of data from the host. A bulk IN endpoint acts as the consumer of data to
-   the host. Appropriate vendor class USB enumeration descriptors with these two bulk
-   endpoints are implemented.
-
-   The GPIF configuration data for the Synchronous Slave FIFO operation is loaded onto
-   the appropriate GPIF registers. The p-port data transfers are done via the producer
-   p-port socket and the consumer p-port socket.
-
-   This example implements two DMA Channels in MANUAL mode one for P to U data transfer
-   and one for U to P data transfer.
-
-   The U to P DMA channel connects the USB producer (OUT) endpoint to the consumer p-port
-   socket. And the P to U DMA channel connects the producer p-port socket to the USB 
-   consumer (IN) endpoint.
-
-   Upon every reception of data in the DMA buffer from the host or from the p-port, the
-   CPU is signalled using DMA callbacks. There are two DMA callback functions implemented
-   each for U to P and P to U data paths. The CPU then commits the DMA buffer received so
-   that the data is transferred to the consumer.
-
-   The DMA buffer size for each channel is defined based on the USB speed. 64 for full
-   speed, 512 for high speed and 1024 for super speed. CY_FX_SLFIFO_DMA_BUF_COUNT in the
-   header file defines the number of DMA buffers per channel.
-
-   The constant CY_FX_SLFIFO_GPIF_16_32BIT_CONF_SELECT in the header file is used to
-   select 16bit or 32bit GPIF data bus configuration.
+/**
+ * ----------------------------------------------------------------------------
+ * FILE:	main.c
+ * DESCRIPTION:	LimeSDR-QPCIe firmware main file
+ * DATE:	2017.12.20
+ * AUTHOR(s):	Lime Microsystems
+ * REVISION: v0r0
+ * ----------------------------------------------------------------------------
  */
 
 #include "cyu3system.h"
@@ -81,7 +37,7 @@
 #include <stdio.h>
 
 //get info
-#define FW_VER				0
+#define FW_VER				1
 
 #define sbi(p,n) ((p) |= (1UL << (n)))
 #define cbi(p,n) ((p) &= ~(1 << (n)))
@@ -91,10 +47,6 @@
 
 #define TRUE			CyTrue
 #define FALSE			CyFalse
-
-#define LED_WINK_PERIOD		18
-#define LED_BLINK1_PERIOD	20
-#define LED_BLINK2_PERIOD	10
 
 
 //BRD_SPI map
@@ -120,21 +72,18 @@ uint32_t die_id[2];
 
 ////functions prototypes
 void Modify_BRDSPI16_Reg_bits (unsigned short int SPI_reg_addr, unsigned char MSB_bit, unsigned char LSB_bit, unsigned short int new_bits_data);
-void Reconfigure_SPI_for_AD5601(void);
+void Reconfigure_SPI_for_AD5662(void);
 void Reconfigure_SPI_for_LMS(void);
 
-
-enum {LED_MODE_OFF, LED_MODE_ON, LED_MODE_WINK, LED_MODE_BLINK1, LED_MODE_BLINK2};
-
-uint8_t test, dac_val, block, cmd_errors, glEp0Buffer[64], glEp0Buffer_Rx[64], glEp0Buffer_Tx[64] __attribute__ ((aligned (32))); //4096
-uint16_t wiper_pos[2];
+uint8_t test, block, cmd_errors, glEp0Buffer[64], glEp0Buffer_Rx[64], glEp0Buffer_Tx[64] __attribute__ ((aligned (32))); //4096
+uint16_t wiper_pos[2], dac_val;
 CyBool_t tx_id;
 
 tLMS_Ctrl_Packet *LMS_Ctrl_Packet_Tx = (tLMS_Ctrl_Packet*)glEp0Buffer_Tx;
 tLMS_Ctrl_Packet *LMS_Ctrl_Packet_Rx = (tLMS_Ctrl_Packet*)glEp0Buffer_Rx;
 
 int flash_page = 0, flash_page_data_cnt = 0, flash_data_cnt_free = 0, flash_data_counter_to_copy = 0;
-unsigned char flash_page_data[FLASH_PAGE_SIZE], FPGA_config_thread_runnning = 0, LED_mode = LED_MODE_OFF, LED_timeout, temp_byte, need_fx3_reset = CyFalse;
+unsigned char flash_page_data[FLASH_PAGE_SIZE], FPGA_config_thread_runnning = 0, temp_byte, need_fx3_reset = CyFalse;
 
 //FPGA conf
 unsigned long int current_portion, fpga_data;
@@ -284,27 +233,29 @@ void Configure_LM75 (void)
  *	@param oe output enable control: 0 - output disabled, 1 - output enabled
  *	@param data pointer to DAC value (1 byte)
  */
-void Control_TCXO_DAC (unsigned char oe, unsigned char *data) //control DAC (AD5601)
+void Control_TCXO_DAC (unsigned char oe, uint16_t *data) //control DAC (AD5601)
 {
-	unsigned char DAC_data[2];
+	unsigned char DAC_data[3];
 
 	Modify_BRDSPI16_Reg_bits (BRD_SPI_REG_SS_CTRL, TCXO_DAC_SS, TCXO_DAC_SS, 0); //select
 
 	if (oe == 0) //set DAC out to three-state
 	{
-		DAC_data[0] = 0xC0; //POWER-DOWN MODE = THREE-STATE (MSB bits = 11) + MSB data
-		DAC_data[1] = 0x00; //LSB data
+		DAC_data[0] = 0x03; //POWER-DOWN MODE = THREE-STATE (PD[1:0]([17:16]) = 11)
+		DAC_data[1] = 0x00;
+		DAC_data[2] = 0x00; //LSB data
 
-		Reconfigure_SPI_for_AD5601 ();
-		CyU3PSpiTransmitWords (&DAC_data[0], 2);
+		Reconfigure_SPI_for_AD5662 ();
+		CyU3PSpiTransmitWords (&DAC_data[0], 3);
 	}
 	else //enable DAC output, set new val
 	{
-		DAC_data[0] = (*data) >>2; //POWER-DOWN MODE = NORMAL OPERATION (MSB bits =00) + MSB data
-		DAC_data[1] = (*data) <<6; //LSB data
+		DAC_data[0] = 0; //POWER-DOWN MODE = NORMAL OPERATION PD[1:0]([17:16]) = 00)
+		DAC_data[1] = ((*data) >>8) & 0xFF;
+		DAC_data[2] = ((*data) >>0) & 0xFF;
 
-		Reconfigure_SPI_for_AD5601 ();
-		CyU3PSpiTransmitWords (&DAC_data[0], 2);
+		Reconfigure_SPI_for_AD5662 ();
+		CyU3PSpiTransmitWords (&DAC_data[0], 3);
 	}
 
 	Modify_BRDSPI16_Reg_bits (BRD_SPI_REG_SS_CTRL, TCXO_DAC_SS, TCXO_DAC_SS, 1); //deselect
@@ -481,7 +432,7 @@ void Reconfigure_SPI_for_Flash(void)
     CyU3PSpiSetConfig (&spiConfig, NULL);
 }
 
-void Reconfigure_SPI_for_AD5601(void)
+void Reconfigure_SPI_for_AD5662(void)
 {
     CyU3PSpiConfig_t spiConfig;
 
@@ -901,7 +852,7 @@ CyBool_t CyFxSlFifoApplnUSBSetupCB (uint32_t setupdat0, uint32_t setupdat1)
  				case CMD_GET_INFO:
 
  					LMS_Ctrl_Packet_Tx->Data_field[0] = FW_VER;
- 					LMS_Ctrl_Packet_Tx->Data_field[1] = DEV_TYPE;
+ 					LMS_Ctrl_Packet_Tx->Data_field[1] = LMS_DEV_QSPARK;
  					LMS_Ctrl_Packet_Tx->Data_field[2] = LMS_PROTOCOL_VER;
  					LMS_Ctrl_Packet_Tx->Data_field[3] = HW_VER;
  					LMS_Ctrl_Packet_Tx->Data_field[4] = EXP_BOARD;
@@ -1225,8 +1176,8 @@ CyBool_t CyFxSlFifoApplnUSBSetupCB (uint32_t setupdat0, uint32_t setupdat1)
  									LMS_Ctrl_Packet_Tx->Data_field[0 + (block * 4)] = LMS_Ctrl_Packet_Rx->Data_field[block]; //ch
  									LMS_Ctrl_Packet_Tx->Data_field[1 + (block * 4)] = 0x00; //RAW //unit, power
 
- 									LMS_Ctrl_Packet_Tx->Data_field[2 + (block * 4)] = 0; //signed val, MSB byte
- 									LMS_Ctrl_Packet_Tx->Data_field[3 + (block * 4)] = dac_val; //signed val, LSB byte
+ 									LMS_Ctrl_Packet_Tx->Data_field[2 + (block * 4)] = (dac_val >> 8) & 0xFF; //unsigned val, MSB byte
+ 									LMS_Ctrl_Packet_Tx->Data_field[3 + (block * 4)] = dac_val & 0xFF; //unsigned val, LSB byte
  									break;
 
  								case 1: //temperature
@@ -1292,23 +1243,18 @@ CyBool_t CyFxSlFifoApplnUSBSetupCB (uint32_t setupdat0, uint32_t setupdat1)
  					case CMD_ANALOG_VAL_WR:
  						if(Check_many_blocks (4)) break;
 
-
  						for(block = 0; block < LMS_Ctrl_Packet_Rx->Header.Data_blocks; block++)
  						{
  							switch (LMS_Ctrl_Packet_Rx->Data_field[0 + (block * 4)]) //do something according to channel
  							{
  								case 0: //TCXO DAC
- 									if (LMS_Ctrl_Packet_Rx->Data_field[1 + (block * 4)] == 0) //RAW units?
+ 									if (LMS_Ctrl_Packet_Rx->Data_field[1 + (block * 4)] == 0) //RAW units and ones?
  									{
- 										if(LMS_Ctrl_Packet_Rx->Data_field[2 + (block * 4)] == 0) //MSB byte empty?
- 										{
- 											Control_TCXO_ADF (0, NULL); //set ADF4002 CP to three-state
+										Control_TCXO_ADF (0, NULL); //set ADF4002 CP to three-state
 
- 											//write data to DAC
- 											dac_val = LMS_Ctrl_Packet_Rx->Data_field[3 + (block * 4)];
- 											Control_TCXO_DAC (1, &dac_val); //enable DAC output, set new val
- 										}
- 										else cmd_errors++;
+										//write data to DAC
+										dac_val = (LMS_Ctrl_Packet_Rx->Data_field[2 + (block * 4)] << 8 ) + LMS_Ctrl_Packet_Rx->Data_field[3 + (block * 4)];
+										Control_TCXO_DAC (1, &dac_val); //enable DAC output, set new val
  									}
  									else cmd_errors++;
 
@@ -2106,8 +2052,7 @@ void CyFxSlFifoApplnInit (void)
     }
 }
 
-void
-FPGA_config_thread(uint32_t input)
+void FPGA_config_thread(uint32_t input)
 {
 	flash_page = 0;
 
@@ -2154,7 +2099,7 @@ void SlFifoAppThread_Entry (uint32_t input)
 
 	//write default TCXO DAC value
 	Control_TCXO_ADF (0, NULL); //set ADF4002 CP to three-state
-	dac_val = 124;//default DAV value
+	dac_val = 30714;//default DAV value
 	Control_TCXO_DAC (1, &dac_val); //enable DAC output, set new val
 
 	Configure_LM75 (); //set LM75 configuration
