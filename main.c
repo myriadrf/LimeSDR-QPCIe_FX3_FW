@@ -37,7 +37,7 @@
 #include <stdio.h>
 
 //get info
-#define FW_VER				1
+#define FW_VER				2
 
 #define sbi(p,n) ((p) |= (1UL << (n)))
 #define cbi(p,n) ((p) &= ~(1 << (n)))
@@ -2091,9 +2091,6 @@ void SlFifoAppThread_Entry (uint32_t input)
     CyFxSlFifoApplnInit();
 
     CyU3PGpioSimpleSetValue (FX3_MCU_BUSY, CyTrue); //FX3 is busy
-
-    CyU3PThreadSleep (500); //wait till GPIF will be fully configured
-    Configure_FPGA_from_flash ();
 
     wiper_pos[0] = wiper_pos[1] = 0x80; //default dig pot wiper values
 
